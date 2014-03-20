@@ -3,7 +3,7 @@
     <type>org.netbeans.modules.javacard.JCPROJECT</type>
     <configuration>
         <data xmlns="http://www.netbeans.org/ns/javacard-project/3">
-        <!-- Do not use Project Properties customizer when editing this file manually. -->
+            <!-- Do not use Project Properties customizer when editing this file manually. -->
             <name>SelfServiceGasStation</name>
             <properties>
                 <property name="javacard.project.subtype">org.netbeans.modules.javacard.capproject</property>
@@ -11,9 +11,7 @@
             <source-roots>
                 <root id="src.dir"/>
             </source-roots>
-            <dependencies>
-            </dependencies>
+            <dependencies/>
         </data>
     </configuration>
 </project>
-

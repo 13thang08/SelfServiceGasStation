@@ -79,6 +79,46 @@ public class SelfServiceGasStation extends Applet {
     final static byte MAX_PIN_SIZE = (byte) 0x08;
     
     /**
+     * SW bytes for PIN verification failed
+     */
+    final static byte SW_VERIFICATION_FAILED = (byte) 0x6300;
+    
+    /**
+     * SW bytes when access without PIN verification
+     */
+    final static byte SW_PIN_VERIFICATION_REQUIRED = (byte) 0x6301;
+    
+    /**
+     * SW bytes when account balance not enough to transaction
+     */
+    final static byte SW_NOT_ENOUGH_ACCOUNT_BALANCE = (byte) 0x6302;
+    
+    /**
+     * SW bytes for invalid update purchase information
+     */
+    final static byte INVALID_UPDATE_PURCHASE_INFO = (byte) 0x6303;
+    
+    /**
+     * SW bytes for invalid station signature
+     */
+    final static byte INVALID_STATION_SIGNATURE = (byte) 0x6304;
+    
+    /**
+     * SW bytes for TLV exception
+     */
+    final static byte TLV_EXCEPTION = (byte) 0x6305;
+    
+    /**
+     * SW bytes for arithmetic exception
+     */
+    final static byte ARITHMETIC_EXCEPTION = (byte) 0x6306;
+    
+    /**
+     * SW bytes when read invalid format number
+     */
+    final static byte INVAILD_NUMBER_FORMAT = (byte) 0x6307;
+    
+    /**
      * The user PIN
      */
     private OwnerPIN pin;
@@ -149,16 +189,43 @@ public class SelfServiceGasStation extends Applet {
      *            the length in bytes of the parameter data in bArray
      */
     public static void install(byte[] bArray, short bOffset, byte bLength) {
-        new SelfServiceGasStation();
+        new SelfServiceGasStation(bArray, bOffset, bLength);
+    }
+    
+    /**
+     * Select method
+     */
+    public boolean select() {
+        // The applet declines to be selected if the pin is blocked
+        if (pin.getTriesRemaining() == 0) {
+            return false;
+        }
+        return true;
+    }
+    
+    /**
+     * Deselect method
+     */
+    public void deselect() {
+        // reset the pin value
+        pin.reset();
     }
 
     /**
      * Only this class's install method should create the applet object.
      */
-    protected SelfServiceGasStation() {
-        // Initialize PIN 123, need edit
+    protected SelfServiceGasStation(byte[] bArray, short bOffset, byte bLength) {
+        
+        // get the pin in parameter
+        byte iLen = bArray[bOffset]; // aid length
+        bOffset = (short) (bOffset + iLen + 1);
+        byte cLen = bArray[bOffset]; // igrone control info
+        bOffset = (short) (bOffset + cLen + 1);
+        byte aLen = bArray[bOffset]; // data length: PIN length
+        
+        // Initialize PIN
         pin = new OwnerPIN(MAX_PIN_TRIES, MAX_PIN_SIZE);
-        pin.update(TEMP_PIN, (short) 0, (byte) 3);
+        pin.update(bArray, (short) (bOffset + 1), aLen); // bOffset + 1: offset of the PIN
         
         // Initialize account balance to 100,000
         accountBalance = new BigNumber((byte) 8);
@@ -180,6 +247,7 @@ public class SelfServiceGasStation extends Applet {
         purchaseHistoriesTag.toBytes(scratchSpace, (short) 0);
         purchaseHistories = (ConstructedBERTLV) BERTLV.getInstance(scratchSpace, (short) 0, (short) 2);
         
+        // register the apple to JCRE
         register();
     }
     
@@ -219,8 +287,6 @@ public class SelfServiceGasStation extends Applet {
      *            the incoming APDU
      */
     public void process(APDU apdu) {
-        //Insert your code here
-        
         // get the APDU buffer
         byte buffer[] = apdu.getBuffer();
         
@@ -230,7 +296,7 @@ public class SelfServiceGasStation extends Applet {
         }
         
         // get the data part of the APDU if this is update purchase info command or is verify command
-        if (buffer[ISO7816.OFFSET_INS] == VERIFY || buffer[ISO7816.OFFSET_INS] == UPDATE_PURCHASE_INFO) {
+        if (buffer[ISO7816.OFFSET_INS] != GET_BALANCE && buffer[ISO7816.OFFSET_INS] != GET_PURCHASE_HISTORIES) {
             apdu.setIncomingAndReceive();
         }
         
@@ -261,7 +327,12 @@ public class SelfServiceGasStation extends Applet {
      * verifies the PIN
      */
     private void verify(byte[] buffer) {
+        byte numBytes = buffer[ISO7816.OFFSET_LC]; // numbytes of pin
         
+        // verify PIN
+        if (pin.check(buffer, ISO7816.OFFSET_CDATA, numBytes) == false) {
+            ISOException.throwIt(SW_VERIFICATION_FAILED);
+        }
     }
     
     /**
@@ -299,7 +370,7 @@ public class SelfServiceGasStation extends Applet {
         } else if (buffer[ISO7816.OFFSET_P1] == BigNumber.FORMAT_HEX) {
             accountBalance.toBytes(buffer, (short) 0, (short) 8, BigNumber.FORMAT_HEX);
         } else {
-            ISOException.throwIt((short) 0x6308); //need edit
+            ISOException.throwIt(INVAILD_NUMBER_FORMAT);
         }
         return (short) 8;
     }
