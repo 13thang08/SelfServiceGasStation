@@ -81,42 +81,42 @@ public class SelfServiceGasStation extends Applet {
     /**
      * SW bytes for PIN verification failed
      */
-    final static byte SW_VERIFICATION_FAILED = (byte) 0x6300;
+    final static short SW_VERIFICATION_FAILED = 0x6300;
     
     /**
      * SW bytes when access without PIN verification
      */
-    final static byte SW_PIN_VERIFICATION_REQUIRED = (byte) 0x6301;
+    final static short SW_PIN_VERIFICATION_REQUIRED = 0x6301;
     
     /**
      * SW bytes when account balance not enough to transaction
      */
-    final static byte SW_NOT_ENOUGH_ACCOUNT_BALANCE = (byte) 0x6302;
+    final static short SW_NOT_ENOUGH_ACCOUNT_BALANCE = 0x6302;
     
     /**
      * SW bytes for invalid update purchase information
      */
-    final static byte INVALID_UPDATE_PURCHASE_INFO = (byte) 0x6303;
+    final static short INVALID_UPDATE_PURCHASE_INFO = 0x6303;
     
     /**
      * SW bytes for invalid station signature
      */
-    final static byte INVALID_STATION_SIGNATURE = (byte) 0x6304;
+    final static short INVALID_STATION_SIGNATURE = 0x6304;
     
     /**
      * SW bytes for TLV exception
      */
-    final static byte TLV_EXCEPTION = (byte) 0x6305;
+    final static short TLV_EXCEPTION = 0x6305;
     
     /**
      * SW bytes for arithmetic exception
      */
-    final static byte ARITHMETIC_EXCEPTION = (byte) 0x6306;
+    final static short ARITHMETIC_EXCEPTION = 0x6306;
     
     /**
      * SW bytes when read invalid format number
      */
-    final static byte INVAILD_NUMBER_FORMAT = (byte) 0x6307;
+    final static short INVAILD_NUMBER_FORMAT = 0x6307;
     
     /**
      * The user PIN
@@ -295,16 +295,30 @@ public class SelfServiceGasStation extends Applet {
             return;
         }
         
+        // check if CLA is not correct
+        if (buffer[ISO7816.OFFSET_CLA] != SSGS_CLA) {
+            ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
+        }
+        
         // get the data part of the APDU if this is update purchase info command or is verify command
         if (buffer[ISO7816.OFFSET_INS] != GET_BALANCE && buffer[ISO7816.OFFSET_INS] != GET_PURCHASE_HISTORIES) {
             apdu.setIncomingAndReceive();
         }
         
+        // process the verify command
+        if (buffer[ISO7816.OFFSET_INS] == VERIFY) {
+            verify(buffer);
+            return;
+        }
+        
+        // if the pin is not validate, declines the access
+        if (!pin.isValidated()) {
+            ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
+        }
+        
         short responseSize = 0;
+        
         switch (buffer[ISO7816.OFFSET_INS]) {
-            case VERIFY:
-                verify(buffer);
-                return;
             case UPDATE_PURCHASE_INFO:
                 updatePurchaseInfo(buffer);
                 break;
@@ -315,7 +329,7 @@ public class SelfServiceGasStation extends Applet {
                 responseSize = getPurchaseHistories(buffer);
                 break;
             default:
-                ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
+                ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
         }
         
         // send the response data back
