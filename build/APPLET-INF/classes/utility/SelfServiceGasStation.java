@@ -61,7 +61,7 @@ public class SelfServiceGasStation extends Applet {
     /**
      * Initial account balance
      */
-    final static byte[] INITIAL_ACCOUNT_BALANCE = {(byte) 0x01, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00};
+    final static byte[] INITIAL_ACCOUNT_BALANCE = {(byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x10, (byte) 0x00, (byte) 0x00};
     
     /**
      * dummy signature
@@ -119,6 +119,11 @@ public class SelfServiceGasStation extends Applet {
     final static short INVAILD_NUMBER_FORMAT = 0x6307;
     
     /**
+     * SW bytes when purchase info is empty (or purchase info not exist - future function)
+     */
+    final static short SW_PURCHASE_INFO_NOT_FOUND = 0x6308;
+    
+    /**
      * The user PIN
      */
     private OwnerPIN pin;
@@ -167,6 +172,11 @@ public class SelfServiceGasStation extends Applet {
      * Primitive BER TLV Tag for station signature
      */
     PrimitiveBERTag signatureTag;
+    
+    /**
+     * Constructed BER TLV Tag for update purchase info message
+     */
+    ConstructedBERTag purchaseUpdateMes;
     
     /**
      * Big number for temporary calculations
@@ -219,7 +229,7 @@ public class SelfServiceGasStation extends Applet {
         // get the pin in parameter
         byte iLen = bArray[bOffset]; // aid length
         bOffset = (short) (bOffset + iLen + 1);
-        byte cLen = bArray[bOffset]; // igrone control info
+        byte cLen = bArray[bOffset]; // control info
         bOffset = (short) (bOffset + cLen + 1);
         byte aLen = bArray[bOffset]; // data length: PIN length
         
@@ -257,9 +267,11 @@ public class SelfServiceGasStation extends Applet {
     private void initConstructedTags() {
         purchaseHistoriesTag = new ConstructedBERTag();
         purchaseInfoTag = new ConstructedBERTag();
+        purchaseUpdateMes = new ConstructedBERTag();
         
         purchaseHistoriesTag.init((byte) 3, (short) 1);
         purchaseInfoTag.init((byte) 3, (short) 2);
+        purchaseUpdateMes.init((byte) 3, (short) 3);
     }
     
     /**
@@ -272,11 +284,11 @@ public class SelfServiceGasStation extends Applet {
         priceTag = new PrimitiveBERTag();
         signatureTag = new PrimitiveBERTag();
         
-        stationIDTag.init((byte) 3, (short) 3);
-        buyTimeTag.init((byte) 3, (short) 4);
-        amountTag.init((byte) 3, (short) 5);
-        priceTag.init((byte) 3, (short) 6);
-        signatureTag.init((byte) 3, (short) 7);
+        stationIDTag.init((byte) 3, (short) 4);
+        buyTimeTag.init((byte) 3, (short) 5);
+        amountTag.init((byte) 3, (short) 6);
+        priceTag.init((byte) 3, (short) 7);
+        signatureTag.init((byte) 3, (short) 8);
     }
 
     /**
@@ -355,24 +367,45 @@ public class SelfServiceGasStation extends Applet {
     private void updatePurchaseInfo(byte[] buffer) {
         short offset = ISO7816.OFFSET_CDATA;
         
-        // create a purchase info TLV
-        ConstructedBERTLV purchaseInfoTLV = (ConstructedBERTLV) BERTLV.getInstance(buffer, offset, (short) 27);
+        // check the Tag is constructed and private
+        if (!BERTag.isConstructed(buffer, offset) || BERTag.tagClass(buffer, offset) != (byte) 3) {
+            ISOException.throwIt(INVALID_UPDATE_PURCHASE_INFO);
+        }
         
-        // append the purchase info TLV to the purchase histories TLV
-        purchaseHistories.append(purchaseInfoTLV);
+        // check the Tag is purchaseUpdateMes
+        short purchaseUpdateMesNumber = BERTag.tagNumber(buffer, offset);
+        if (purchaseUpdateMesNumber != purchaseUpdateMes.tagNumber()) {
+            ISOException.throwIt(INVALID_UPDATE_PURCHASE_INFO);
+        }
         
-        // find the amount value offset
+        // verify the station signature
+        verifyStationSignature(buffer, offset);
+        
+        // if the signature is validated, update the account balance
+        
+        // get the amount TLV and value offset
         amountTag.toBytes(scratchSpace, (short) 0);
         short amountTLVOffset = ConstructedBERTLV.find(buffer, offset, scratchSpace, (short) 0);
-        short amountOffset = PrimitiveBERTLV.getValueOffset(buffer, amountTLVOffset);
         
-        // find the price value offset
+        // get the price TLV and value offset
         priceTag.toBytes(scratchSpace, (short) 0);
         short priceTLVOffset = ConstructedBERTLV.find(buffer, offset, scratchSpace, (short) 0);
-        short priceOffset = PrimitiveBERTLV.getValueOffset(buffer, priceTLVOffset);
         
-        // update the account balance with the amount and the price of the gasoline
-        updateAccountBalance(buffer, amountOffset, priceOffset);
+        // get the stationID TLV offset
+        stationIDTag.toBytes(scratchSpace, (short) 0);
+        short stationIDTLVOffset = ConstructedBERTLV.find(buffer, offset, scratchSpace, (short) 0);
+        
+        // get the buyTime TLV offset
+        buyTimeTag.toBytes(scratchSpace, (short) 0);
+        short buyTimeTLVOffset = ConstructedBERTLV.find(buffer, offset, scratchSpace, (short) 0);
+        
+        ConstructedBERTLV newPurchaseInfo = createNewPurchaseInfoTLV(buffer, stationIDTLVOffset, buyTimeTLVOffset, amountTLVOffset, priceTLVOffset);
+        
+        // if no error, update purchase histories and account balance
+        purchaseHistories.append(newPurchaseInfo);
+        updateAccountBalance(buffer, amountTLVOffset, priceTLVOffset);
+        
+        
     }
     
     /**
@@ -393,18 +426,35 @@ public class SelfServiceGasStation extends Applet {
      * get purchase histories
      */
     private short getPurchaseHistories(byte[] buffer) {
-        return purchaseHistories.toBytes(buffer, (short) 0);
+        try {
+            return purchaseHistories.toBytes(buffer, (short) 0);
+        } catch (TLVException e) {
+            if (e.getReason() == TLVException.EMPTY_TLV) {
+                ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
+            }
+        }
+        return 0;
     }
     
     /**
      * update account balance
      */
-    void updateAccountBalance(byte[] buffer, short amountOffset, short priceOffset) {
+    void updateAccountBalance(byte[] buffer, short amountTLVOffset, short priceTLVOffset) {
+        
+        short amountValueOffset = PrimitiveBERTLV.getValueOffset(buffer, amountTLVOffset);
+        short priceValueOffset = PrimitiveBERTLV.getValueOffset(buffer, priceTLVOffset);
+        
         // tempBigNum = amount
-        tempBigNum.init(buffer, amountOffset, (short) 4, BigNumber.FORMAT_HEX);
+        tempBigNum.init(buffer, amountValueOffset, (short) 4, BigNumber.FORMAT_HEX);
         
         // tempBigNum = amount * price
-        tempBigNum.multiply(buffer, priceOffset, (short) 2, BigNumber.FORMAT_HEX);
+        tempBigNum.multiply(buffer, priceValueOffset, (short) 4, BigNumber.FORMAT_HEX);
+        
+        // if account balance not enough, set account balance to 0 and throw exception
+        if (accountBalance.compareTo(tempBigNum) < (byte) 0) {
+            accountBalance.reset();
+            ISOException.throwIt(SW_NOT_ENOUGH_ACCOUNT_BALANCE);
+        }
         
         // write temBigNum to scratchSpace array
         tempBigNum.toBytes(scratchSpace, (short) 0, (short) 8, BigNumber.FORMAT_HEX);
@@ -413,5 +463,70 @@ public class SelfServiceGasStation extends Applet {
         accountBalance.subtract(scratchSpace, (short) 0, (short) 8, BigNumber.FORMAT_HEX);
         
     }
+    
+    /**
+     * verify the station signature
+     * @param buffer: buffer contain signature
+     * @param TVLOffset: offset to the Signature TLV
+     */
+    void verifyStationSignature(byte[] buffer, short TVLOffset) {
+        // write signatureTag to scratchSpace array
+        signatureTag.toBytes(scratchSpace, (short) 0);
+        
+        // get the signature TLV Offset
+        short signatureTLVOffset = ConstructedBERTLV.find(buffer, TVLOffset, scratchSpace, (short) 0);
+        
+        // get the value of signature TLV Offset
+        short signatureValueOffset = PrimitiveBERTLV.getValueOffset(buffer, signatureTLVOffset);
+        
+        // compare with dummySignature
+        if (Util.arrayCompare(buffer, signatureValueOffset, dummySignature, (short) 0, (byte) dummySignature.length) != 0) {
+            ISOException.throwIt(INVALID_STATION_SIGNATURE);
+        }
+        
+    }
+    
+    /**
+     * create new purchase info TLV to update purchase histories
+     * @param buffer
+     * @param stationIDOffset
+     * @param buyTimeOffset
+     * @param amountOffset
+     * @param priceOffset 
+     */
+    private ConstructedBERTLV createNewPurchaseInfoTLV(byte buffer[], short stationIDOffset, short buyTimeOffset, short amountOffset, short priceOffset) {
+        // create new empty purchaseInfo
+        Util.arrayFillNonAtomic(scratchSpace, (short) 0, (short) scratchSpace.length, (byte) 0);
+        purchaseInfoTag.toBytes(scratchSpace, (short) 0);
+        ConstructedBERTLV purchaseInfo = (ConstructedBERTLV) BERTLV.getInstance(scratchSpace, (short) 0, (short) 2);
+        
+        // create the stationID TLV
+        PrimitiveBERTLV stationIDTLV = (PrimitiveBERTLV) BERTLV.getInstance(buffer, stationIDOffset, (short) 7);
+        
+        // append to the purchaseInfo
+        purchaseInfo.append(stationIDTLV);
+        
+        // create the buyTime TLV
+        PrimitiveBERTLV buyTimeTLV = (PrimitiveBERTLV) BERTLV.getInstance(buffer, buyTimeOffset, (short) 12);
+        
+        // append to the purchaseInfo
+        purchaseInfo.append(buyTimeTLV);
+        
+        // create the amount TLV
+        PrimitiveBERTLV amountTLV = (PrimitiveBERTLV) BERTLV.getInstance(buffer, amountOffset, (short) 6);
+        
+        // append to the purchaseInfo
+        purchaseInfo.append(amountTLV);
+        
+        // create the price TLV
+        PrimitiveBERTLV priceTLV = (PrimitiveBERTLV) BERTLV.getInstance(buffer, priceOffset, (short) 6);
+        purchaseInfo.append(priceTLV);
+        
+        // return the purchaseInfo
+        return purchaseInfo;
+        
+    }
+    
+    
 }
 
