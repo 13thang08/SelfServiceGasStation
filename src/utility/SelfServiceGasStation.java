@@ -136,6 +136,11 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
     final static short SW_PURCHASE_INFO_NOT_FOUND = 0x6308;
 
     /**
+     * SW bytes when pin is blocked
+     */
+    final static short SW_PIN_IS_BLOCKED = 0x6309;
+
+    /**
      * The user PIN
      */
     private OwnerPIN pin;
@@ -285,7 +290,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         purchaseHistoriesTag = new ConstructedBERTag();
         purchaseInfoTag = new ConstructedBERTag();
         purchaseUpdateMes = new ConstructedBERTag();
-
+        
         purchaseHistoriesTag.init((byte) 3, (short) 1);
         purchaseInfoTag.init((byte) 3, (short) 2);
         purchaseUpdateMes.init((byte) 3, (short) 3);
@@ -300,7 +305,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         amountTag = new PrimitiveBERTag();
         priceTag = new PrimitiveBERTag();
         signatureTag = new PrimitiveBERTag();
-
+        
         stationIDTag.init((byte) 3, (short) 4);
         buyTimeTag.init((byte) 3, (short) 5);
         amountTag.init((byte) 3, (short) 6);
@@ -327,7 +332,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         if (buffer[ISO7816.OFFSET_CLA] != SSGS_CLA) {
             ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
         }
-
+        
         switch (buffer[ISO7816.OFFSET_INS]) {
             case VERIFY:
                 verify(apdu);
@@ -350,7 +355,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
             default:
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
         }
-
+        
     }
 
     /**
@@ -364,6 +369,9 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
 
         // verify PIN
         if (pin.check(buffer, ISO7816.OFFSET_CDATA, byteRead) == false) {
+            if (pin.getTriesRemaining() == 0) {
+                ISOException.throwIt(SW_PIN_IS_BLOCKED);
+            }
             ISOException.throwIt(SW_VERIFICATION_FAILED);
         }
     }
@@ -381,7 +389,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
 
         // retrieve the data for update
         apdu.setIncomingAndReceive();
-
+        
         short offset = ISO7816.OFFSET_CDATA;
 
         // check the Tag is constructed and private
@@ -414,13 +422,13 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         // get the buyTime TLV offset
         buyTimeTag.toBytes(scratchSpace, (short) 0);
         short buyTimeTLVOffset = ConstructedBERTLV.find(buffer, offset, scratchSpace, (short) 0);
-
+        
         ConstructedBERTLV newPurchaseInfo = createNewPurchaseInfoTLV(buffer, stationIDTLVOffset, buyTimeTLVOffset, amountTLVOffset, priceTLVOffset);
 
         // if no error, update purchase histories and account balance
         purchaseHistories.append(newPurchaseInfo);
         updateAccountBalance(buffer, amountTLVOffset, priceTLVOffset);
-
+        
     }
 
     /**
@@ -438,7 +446,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
 
         // send the balance
         apdu.setOutgoingAndSend((short) 0, (short) 8);
-
+        
     }
 
     /**
@@ -451,7 +459,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         if (!pin.isValidated()) {
             ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
         }
-
+        
         try {
             // write purchase histories to exchangeData array
             short numBytes = purchaseHistories.toBytes(exchangeData, (short) 0);
@@ -460,13 +468,13 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
             apdu.setOutgoing();
             apdu.setOutgoingLength(numBytes);
             apdu.sendBytesLong(exchangeData, (short) 0, numBytes);
-
+            
         } catch (TLVException e) {
             if (e.getReason() == TLVException.EMPTY_TLV) {
                 ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
             }
         }
-
+        
     }
 
     /**
@@ -479,12 +487,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         if (!pin.isValidated()) {
             ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
         }
-
+        
         apdu.setIncomingAndReceive();
         short offset = apdu.getOffsetCdata();
-
+        
         ConstructedBERTLV historiesResult = findHistoriesbyTime(buffer, offset);
-
+        
         if (historiesResult.getLength() == 0) {
             ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
         } else {
@@ -508,12 +516,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         if (!pin.isValidated()) {
             ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
         }
-
+        
         apdu.setIncomingAndReceive();
         short offset = apdu.getOffsetCdata();
-
+        
         ConstructedBERTLV historiesResult = findHistoriesbyStation(buffer, offset);
-
+        
         if (historiesResult.getLength() == 0) {
             ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
         } else {
@@ -531,7 +539,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
      * update account balance
      */
     void updateAccountBalance(byte[] buffer, short amountTLVOffset, short priceTLVOffset) {
-
+        
         short amountValueOffset = PrimitiveBERTLV.getValueOffset(buffer, amountTLVOffset);
         short priceValueOffset = PrimitiveBERTLV.getValueOffset(buffer, priceTLVOffset);
 
@@ -552,7 +560,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
 
         // update the accountBalance: accountBalance -= tempBigNum
         accountBalance.subtract(scratchSpace, (short) 0, (short) 8, BigNumber.FORMAT_HEX);
-
+        
     }
 
     /**
@@ -575,7 +583,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         if (Util.arrayCompare(buffer, signatureValueOffset, dummySignature, (short) 0, (byte) dummySignature.length) != 0) {
             ISOException.throwIt(INVALID_STATION_SIGNATURE);
         }
-
+        
     }
 
     /**
@@ -617,7 +625,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
 
         // return the purchaseInfo
         return purchaseInfo;
-
+        
     }
 
     /**
@@ -633,19 +641,19 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         Util.arrayFillNonAtomic(scratchSpace, (short) 0, (short) scratchSpace.length, (byte) 0);
         purchaseHistoriesTag.toBytes(scratchSpace, (short) 0);
         ConstructedBERTLV historiesResult = (ConstructedBERTLV) BERTLV.getInstance(scratchSpace, (short) 0, (short) 2);
-
+        
         ConstructedBERTLV tempPurchaseInfo = (ConstructedBERTLV) purchaseHistories.find(purchaseInfoTag);
-
+        
         while (tempPurchaseInfo != null) {
             PrimitiveBERTLV buyTimeTLV = (PrimitiveBERTLV) tempPurchaseInfo.find(buyTimeTag);
             buyTimeTLV.getValue(scratchSpace, (short) 0);
             if (Util.arrayCompare(buffer, offset, scratchSpace, (short) 0, (short) 6) == 0) {
                 historiesResult.append(tempPurchaseInfo);
             }
-
+            
             tempPurchaseInfo = (ConstructedBERTLV) purchaseHistories.findNext(purchaseInfoTag, tempPurchaseInfo, (short) 1);
         }
-
+        
         return historiesResult;
     }
 
@@ -662,21 +670,21 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         Util.arrayFillNonAtomic(scratchSpace, (short) 0, (short) scratchSpace.length, (byte) 0);
         purchaseHistoriesTag.toBytes(scratchSpace, (short) 0);
         ConstructedBERTLV historiesResult = (ConstructedBERTLV) BERTLV.getInstance(scratchSpace, (short) 0, (short) 2);
-
+        
         ConstructedBERTLV tempPurchaseInfo = (ConstructedBERTLV) purchaseHistories.find(purchaseInfoTag);
-
+        
         while (tempPurchaseInfo != null) {
             PrimitiveBERTLV buyTimeTLV = (PrimitiveBERTLV) tempPurchaseInfo.find(stationIDTag);
             buyTimeTLV.getValue(scratchSpace, (short) 0);
             if (Util.arrayCompare(buffer, offset, scratchSpace, (short) 0, (short) 5) == 0) {
                 historiesResult.append(tempPurchaseInfo);
             }
-
+            
             tempPurchaseInfo = (ConstructedBERTLV) purchaseHistories.findNext(purchaseInfoTag, tempPurchaseInfo, (short) 1);
-
+            
         }
-
+        
         return historiesResult;
     }
-
+    
 }
