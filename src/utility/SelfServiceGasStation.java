@@ -134,6 +134,11 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
      * function)
      */
     final static short SW_PURCHASE_INFO_NOT_FOUND = 0x6308;
+    
+    /**
+     * SW bytes when PIN is blocked
+     */
+    final static short SW_PIN_IS_BLOCKED = 0x6309;
 
     /**
      * The user PIN
@@ -361,6 +366,10 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
 
         // retireve the PIN data for validation
         byte byteRead = (byte) apdu.setIncomingAndReceive();
+        
+        if (pin.getTriesRemaining() == 0) {
+            ISOException.throwIt(SW_PIN_IS_BLOCKED);
+        }
 
         // verify PIN
         if (pin.check(buffer, ISO7816.OFFSET_CDATA, byteRead) == false) {
