@@ -70,11 +70,6 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
     final static byte GET_PURCHASE_HISTORIES_BY_STATION = (byte) 0x06;
 
     /**
-     * Initial account balance
-     */
-    final static byte[] INITIAL_ACCOUNT_BALANCE = {(byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x10, (byte) 0x00, (byte) 0x00};
-
-    /**
      * dummy signature
      */
     private static final byte[] dummySignature = {(byte) 0x88, (byte) 0x88, (byte) 0x88, (byte) 0x88, (byte) 0x88, (byte) 0x88, (byte) 0x88, (byte) 0x88};
@@ -148,7 +143,7 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
     /**
      * Amount of money in user's account
      */
-    private BigNumber accountBalance;
+    private int accountBalance;
 
     /**
      * This constructed BER TLV holds the purchase histories
@@ -196,17 +191,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
     ConstructedBERTag purchaseUpdateMes;
 
     /**
-     * Big number for temporary calculations
-     */
-    BigNumber tempBigNum;
-
-    /**
      * Temporary buffer used as scratch space
      */
     byte[] scratchSpace;
 
     /**
-     * buffer for exchange data between card and host application
+     * buffer for exchange data between card and host application, ex: purchase histories
      */
     byte[] exchangeData;
 
@@ -256,12 +246,8 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         pin = new OwnerPIN(MAX_PIN_TRIES, MAX_PIN_SIZE);
         pin.update(bArray, (short) (bOffset + 1), aLen); // bOffset + 1: offset of the PIN
 
-        // Initialize account balance to 100,000
-        accountBalance = new BigNumber((byte) 8);
-        accountBalance.init(INITIAL_ACCOUNT_BALANCE, (byte) 0, (byte) INITIAL_ACCOUNT_BALANCE.length, BigNumber.FORMAT_BCD);
-
-        // Initialize the temporary big number
-        tempBigNum = new BigNumber(BigNumber.getMaxBytesSupported());
+        // Initialize account balance to 1000,000
+        accountBalance = 1000000;
 
         // Initialize the scatchSpace
         scratchSpace = JCSystem.makeTransientByteArray((short) 10, JCSystem.CLEAR_ON_DESELECT);
@@ -436,16 +422,9 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
      */
     private void getBalance(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
-        if (buffer[ISO7816.OFFSET_P1] == BigNumber.FORMAT_BCD) {
-            accountBalance.toBytes(buffer, (short) 0, (short) 8, BigNumber.FORMAT_BCD);
-        } else if (buffer[ISO7816.OFFSET_P1] == BigNumber.FORMAT_HEX) {
-            accountBalance.toBytes(buffer, (short) 0, (short) 8, BigNumber.FORMAT_HEX);
-        } else {
-            ISOException.throwIt(INVAILD_NUMBER_FORMAT);
-        }
-
+        JCint.setInt(buffer, (short) 0, accountBalance);
         // send the balance
-        apdu.setOutgoingAndSend((short) 0, (short) 8);
+        apdu.setOutgoingAndSend((short) 0, (short) 4);
         
     }
 
@@ -543,23 +522,18 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         short amountValueOffset = PrimitiveBERTLV.getValueOffset(buffer, amountTLVOffset);
         short priceValueOffset = PrimitiveBERTLV.getValueOffset(buffer, priceTLVOffset);
 
-        // tempBigNum = amount
-        tempBigNum.init(buffer, amountValueOffset, (short) 4, BigNumber.FORMAT_HEX);
-
-        // tempBigNum = amount * price
-        tempBigNum.multiply(buffer, priceValueOffset, (short) 4, BigNumber.FORMAT_HEX);
+        int amount = JCint.getInt(buffer, amountValueOffset);
+        int price = JCint.getInt(buffer, priceValueOffset);
+        int cost = amount * price;
 
         // if account balance not enough, set account balance to 0 and throw exception
-        if (accountBalance.compareTo(tempBigNum) < (byte) 0) {
-            accountBalance.reset();
+        if (accountBalance < cost) {
+            accountBalance = 0;
             ISOException.throwIt(SW_NOT_ENOUGH_ACCOUNT_BALANCE);
         }
 
-        // write temBigNum to scratchSpace array
-        tempBigNum.toBytes(scratchSpace, (short) 0, (short) 8, BigNumber.FORMAT_HEX);
-
-        // update the accountBalance: accountBalance -= tempBigNum
-        accountBalance.subtract(scratchSpace, (short) 0, (short) 8, BigNumber.FORMAT_HEX);
+        // update account balance
+        accountBalance -= cost;
         
     }
 
