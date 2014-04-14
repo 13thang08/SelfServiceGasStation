@@ -68,6 +68,16 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
      * INS value for get purchase histories by station
      */
     final static byte GET_PURCHASE_HISTORIES_BY_STATION = (byte) 0x06;
+    
+    /**
+     * INS value for get last histories
+     */
+    final static byte GET_LAST_PURCHASE_HISTORY = (byte) 0x07;
+    
+    /**
+     * INS value for change PIN
+     */
+    final static byte CHANGE_PIN = (byte) 0x08;
 
     /**
      * dummy signature
@@ -337,6 +347,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
                 return;
             case GET_PURCHASE_HISTORIES_BY_STATION:
                 getPurchaseHistoriesByStation(apdu);
+                return;
+            case CHANGE_PIN:
+                changePIN(apdu);
+                return;
+            case GET_LAST_PURCHASE_HISTORY:
+                getLastPurchaseHistory(apdu);
                 return;
             default:
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
@@ -659,6 +675,73 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         }
         
         return historiesResult;
+    }
+    
+    /**
+     * change the PIN
+     * @param apdu 
+     */
+    private void changePIN (APDU apdu) {
+        byte[] buffer = apdu.getBuffer();
+        
+        // retrieve the new PIN
+        short byteRead = apdu.setIncomingAndReceive();
+        
+        // check the present PIN is validated
+        if (!pin.isValidated()) {
+            ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
+        }
+        
+        // check the new PIN lengh
+        if (byteRead > 8) {
+            ISOException.throwIt(ISO7816.SW_WRONG_DATA);
+        }
+        
+        // if no error, update the PIN
+        pin.update(buffer, (short) ISO7816.OFFSET_CDATA, (byte) byteRead);
+        
+    }
+    
+    /**
+     * get last purchase history
+     * @param apdu 
+     */
+    private void getLastPurchaseHistory(APDU apdu) {
+        byte buffer[] = apdu.getBuffer();
+
+        // check the validation of PIN
+        if (!pin.isValidated()) {
+            ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
+        }
+        
+        // find recent history
+        
+        // create historiesResult to save search result
+        Util.arrayFillNonAtomic(scratchSpace, (short) 0, (short) scratchSpace.length, (byte) 0);
+        purchaseHistoriesTag.toBytes(scratchSpace, (short) 0);
+        ConstructedBERTLV historiesResult = (ConstructedBERTLV) BERTLV.getInstance(scratchSpace, (short) 0, (short) 2);
+        
+        ConstructedBERTLV tempPurchaseInfo = (ConstructedBERTLV) purchaseHistories.find(purchaseInfoTag);
+        ConstructedBERTLV lastPurchaseInfo = tempPurchaseInfo;
+        while (tempPurchaseInfo != null) {
+            lastPurchaseInfo = tempPurchaseInfo;
+            tempPurchaseInfo = (ConstructedBERTLV) purchaseHistories.findNext(purchaseInfoTag, tempPurchaseInfo, (short) 1);
+            
+        }
+        historiesResult.append(lastPurchaseInfo);
+        
+        if (historiesResult.getLength() == 0) {
+            ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
+        } else {
+            // write purchase histories to exchangeData array
+            short numBytes = historiesResult.toBytes(exchangeData, (short) 0);
+
+            // send data to the host application
+            apdu.setOutgoing();
+            apdu.setOutgoingLength(numBytes);
+            apdu.sendBytesLong(exchangeData, (short) 0, numBytes);
+        }
+        
     }
     
 }
