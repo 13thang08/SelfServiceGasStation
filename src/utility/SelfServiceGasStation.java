@@ -455,6 +455,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
             ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
         }
         
+        // if purchaseHistories is empty, throw SW_PURCHASE_INFO_NOT_FOUND
+        if (purchaseHistories.getLength() == 0) {
+            ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
+            return;
+        }
+        
         try {
             // write purchase histories to exchangeData array
             short numBytes = purchaseHistories.toBytes(exchangeData, (short) 0);
@@ -481,6 +487,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         // check the validation of PIN
         if (!pin.isValidated()) {
             ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
+        }
+        
+        // if purchaseHistories is empty, throw SW_PURCHASE_INFO_NOT_FOUND
+        if (purchaseHistories.getLength() == 0) {
+            ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
+            return;
         }
         
         apdu.setIncomingAndReceive();
@@ -510,6 +522,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         // check the validation of PIN
         if (!pin.isValidated()) {
             ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
+        }
+        
+        // if purchaseHistories is empty, throw SW_PURCHASE_INFO_NOT_FOUND
+        if (purchaseHistories.getLength() == 0) {
+            ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
+            return;
         }
         
         apdu.setIncomingAndReceive();
@@ -712,6 +730,12 @@ public class SelfServiceGasStation extends Applet implements ExtendedLength {
         // check the validation of PIN
         if (!pin.isValidated()) {
             ISOException.throwIt(SW_PIN_VERIFICATION_REQUIRED);
+        }
+        
+        // if purchaseHistories is empty, throw SW_PURCHASE_INFO_NOT_FOUND
+        if (purchaseHistories.getLength() == 0) {
+            ISOException.throwIt(SW_PURCHASE_INFO_NOT_FOUND);
+            return;
         }
         
         // find recent history
